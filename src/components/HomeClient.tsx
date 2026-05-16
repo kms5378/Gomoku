@@ -1,0 +1,152 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig, normalizeRpcRow } from "@/src/lib/supabase/client";
+import type { RoomRecord } from "@/src/lib/types";
+
+const NICKNAME_KEY = "gomoku:nickname";
+
+export function HomeClient() {
+  const router = useRouter();
+  const client = useMemo(() => getSupabaseClient(), []);
+  const [nickname, setNickname] = useState("");
+  const [roomCode, setRoomCode] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setNickname(window.localStorage.getItem(NICKNAME_KEY) ?? "");
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  async function createRoom() {
+    if (!client) {
+      return;
+    }
+
+    await runRoomAction(async () => {
+      const session = await ensureAnonymousSession(client);
+      const cleanNickname = persistNickname();
+      const { data, error: rpcError } = await client.rpc("create_room", {
+        p_nickname: cleanNickname
+      });
+
+      if (rpcError) {
+        throw new Error(rpcError.message);
+      }
+
+      if (!session.user.id) {
+        throw new Error("Anonymous session could not be created.");
+      }
+
+      const room = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
+
+      if (!room) {
+        throw new Error("Room creation returned no room.");
+      }
+
+      router.push(`/room/${room.code}`);
+    });
+  }
+
+  async function joinRoom() {
+    if (!client) {
+      return;
+    }
+
+    await runRoomAction(async () => {
+      await ensureAnonymousSession(client);
+      persistNickname();
+      const code = roomCode.trim().toUpperCase();
+
+      if (!code) {
+        throw new Error("입장할 방 코드를 입력하세요.");
+      }
+
+      router.push(`/room/${code}`);
+    });
+  }
+
+  async function runRoomAction(action: () => Promise<void>) {
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      await action();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "요청을 처리하지 못했습니다.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function persistNickname() {
+    const cleanNickname = nickname.trim() || "Guest";
+    window.localStorage.setItem(NICKNAME_KEY, cleanNickname);
+    setNickname(cleanNickname);
+    return cleanNickname;
+  }
+
+  const isConfigured = hasSupabaseConfig();
+
+  return (
+    <main className="homeLayout">
+      <section className="heroBand">
+        <div className="heroCopy">
+          <p className="eyebrow">Realtime Gomoku</p>
+          <h1>오목 대전</h1>
+          <p className="lede">방 코드를 만들고 공유하면 같은 방에서 실시간으로 대전할 수 있습니다.</p>
+        </div>
+        <div className="homePanel">
+          {!isConfigured ? (
+            <div className="notice" role="status">
+              Supabase 환경 변수가 필요합니다. `.env.local`에 `NEXT_PUBLIC_SUPABASE_URL`과
+              `NEXT_PUBLIC_SUPABASE_ANON_KEY`를 설정하세요.
+            </div>
+          ) : null}
+
+          <label className="fieldLabel" htmlFor="nickname">
+            닉네임
+          </label>
+          <input
+            className="textInput"
+            id="nickname"
+            maxLength={24}
+            onChange={(event) => setNickname(event.target.value)}
+            placeholder="플레이어 이름"
+            value={nickname}
+          />
+
+          <div className="actionGrid">
+            <button className="primaryButton" disabled={!isConfigured || isSubmitting} onClick={createRoom} type="button">
+              방 만들기
+            </button>
+            <div className="joinInline">
+              <input
+                aria-label="방 코드"
+                className="textInput codeInput"
+                maxLength={6}
+                onChange={(event) => setRoomCode(event.target.value.toUpperCase())}
+                placeholder="ABC123"
+                value={roomCode}
+              />
+              <button className="secondaryButton" disabled={!isConfigured || isSubmitting} onClick={joinRoom} type="button">
+                입장
+              </button>
+            </div>
+          </div>
+
+          {error ? (
+            <p className="errorText" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      </section>
+    </main>
+  );
+}
