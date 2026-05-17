@@ -24,7 +24,7 @@ npm run dev
 
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
 ```
 
 ## Supabase 설정
@@ -45,7 +45,7 @@ supabase db push
 Vercel 프로젝트를 만들고 아래 환경 변수를 Production/Preview/Development에 등록합니다.
 
 - `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 
 CLI를 쓴다면:
 
@@ -53,7 +53,7 @@ CLI를 쓴다면:
 npm i -g vercel
 vercel link
 vercel env add NEXT_PUBLIC_SUPABASE_URL
-vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY
+vercel env add NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 vercel --prod
 ```
 
