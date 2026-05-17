@@ -104,8 +104,8 @@ export function HomeClient() {
         <div className="homePanel">
           {!isConfigured ? (
             <div className="notice" role="status">
-              Supabase 환경 변수가 필요합니다. `.env.local`에 `NEXT_PUBLIC_SUPABASE_URL`과
-              `NEXT_PUBLIC_SUPABASE_ANON_KEY`를 설정하세요.
+              Supabase 환경 변수가 필요합니다. `NEXT_PUBLIC_SUPABASE_URL`과
+              `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 설정한 뒤 다시 배포하세요.
             </div>
           ) : null}
 

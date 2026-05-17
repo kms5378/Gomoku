@@ -226,7 +226,8 @@ export function RoomClient({ code }: { code: string }) {
     return (
       <main className="roomLayout">
         <div className="notice" role="status">
-          Supabase 환경 변수가 필요합니다. `.env.local`을 설정한 뒤 다시 실행하세요.
+          Supabase 환경 변수가 필요합니다. `NEXT_PUBLIC_SUPABASE_URL`과
+          `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 설정한 뒤 다시 배포하세요.
         </div>
       </main>
     );
