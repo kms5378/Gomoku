@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bothPlayersRequestedRestart, canSubmitMove, resolvePlayerColor, swappedPlayersForNextGame } from "./room-rules";
+import { bothPlayersRequestedRestart, canChooseSide, canSubmitMove, resolvePlayerColor, swappedPlayersForNextGame } from "./room-rules";
 
 const room = {
   black_player: "black-id",
@@ -22,6 +22,73 @@ describe("room rules", () => {
     expect(canSubmitMove({ room, myColor: "white", isSubmitting: false })).toBe(false);
     expect(canSubmitMove({ room, myColor: "black", isSubmitting: true })).toBe(false);
     expect(canSubmitMove({ room: { ...room, status: "finished" }, myColor: "black", isSubmitting: false })).toBe(false);
+  });
+
+  it("allows side selection only in waiting rooms with an open target side", () => {
+    expect(
+      canChooseSide({
+        room: { ...room, status: "waiting", black_player: null, white_player: null },
+        side: "black",
+        userId: "player-id",
+        isChoosing: false
+      })
+    ).toBe(true);
+    expect(
+      canChooseSide({
+        room: { ...room, status: "waiting", black_player: "black-id", white_player: null },
+        side: "white",
+        userId: "other-id",
+        isChoosing: false
+      })
+    ).toBe(true);
+    expect(
+      canChooseSide({
+        room: { ...room, status: "waiting", black_player: "black-id", white_player: null },
+        side: "white",
+        userId: "black-id",
+        isChoosing: false
+      })
+    ).toBe(true);
+    expect(
+      canChooseSide({
+        room: { ...room, status: "waiting", black_player: "black-id", white_player: null },
+        side: "black",
+        userId: "other-id",
+        isChoosing: false
+      })
+    ).toBe(false);
+    expect(
+      canChooseSide({
+        room: { ...room, status: "playing", black_player: null, white_player: null },
+        side: "black",
+        userId: "player-id",
+        isChoosing: false
+      })
+    ).toBe(false);
+    expect(
+      canChooseSide({
+        room: { ...room, status: "waiting", black_player: null, white_player: null },
+        side: "black",
+        userId: "player-id",
+        isChoosing: true
+      })
+    ).toBe(false);
+    expect(
+      canChooseSide({
+        room: { ...room, status: "waiting", black_player: "black-id", white_player: null },
+        side: "black",
+        userId: "black-id",
+        isChoosing: false
+      })
+    ).toBe(false);
+    expect(
+      canChooseSide({
+        room: { ...room, status: "waiting", black_player: null, white_player: null },
+        side: "black",
+        userId: null,
+        isChoosing: false
+      })
+    ).toBe(false);
   });
 
   it("requires both restart requests and swaps colors for the next game", () => {

@@ -15,7 +15,7 @@ export type RoomRecord = {
   id: string;
   code: string;
   status: RoomStatus;
-  black_player: string;
+  black_player: string | null;
   white_player: string | null;
   current_turn: StoneColor;
   winner: StoneColor | null;

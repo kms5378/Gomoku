@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { buildBoardFromMoves, detectWinner, getForbiddenBlackMove, type StoneColor } from "@/src/lib/gomoku";
+import { canChooseSide } from "@/src/lib/room-rules";
 import { playStoneSound } from "@/src/lib/sound";
 import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig, normalizeRpcRow } from "@/src/lib/supabase/client";
 import type { MoveRecord, ProfileRecord, RoomRecord } from "@/src/lib/types";
@@ -22,6 +23,7 @@ export function RoomClient({ code }: { code: string }) {
   const [profiles, setProfiles] = useState<ProfileMap>({});
   const [isJoining, setIsJoining] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [choosingSide, setChoosingSide] = useState<StoneColor | null>(null);
   const [error, setError] = useState<string | null>(null);
   const joinAttemptedRef = useRef(false);
 
@@ -251,6 +253,33 @@ export function RoomClient({ code }: { code: string }) {
     }
   }
 
+  async function chooseSide(side: StoneColor) {
+    if (!client || !room || !canChooseSide({ room, side, userId, isChoosing: choosingSide !== null })) {
+      return;
+    }
+
+    setError(null);
+    setChoosingSide(side);
+
+    try {
+      const { data, error: rpcError } = await client.rpc("choose_side", {
+        p_code: room.code,
+        p_side: side
+      });
+
+      if (rpcError) {
+        throw new Error(rpcError.message);
+      }
+
+      const nextRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
+      await refreshRoom(nextRoom?.id ?? room.id);
+    } catch (sideError) {
+      setError(sideError instanceof Error ? sideError.message : "흑/백 선택을 처리하지 못했습니다.");
+    } finally {
+      setChoosingSide(null);
+    }
+  }
+
   if (!hasSupabaseConfig()) {
     return (
       <main className="roomLayout">
@@ -308,8 +337,24 @@ export function RoomClient({ code }: { code: string }) {
 
       <section className="gameSurface">
         <aside className="scoreRail">
-          <PlayerPanel color="black" isCurrentTurn={room?.current_turn === "black"} isYou={myColor === "black"} profile={blackProfile} />
-          <PlayerPanel color="white" isCurrentTurn={room?.current_turn === "white"} isYou={myColor === "white"} profile={whiteProfile} />
+          <PlayerPanel
+            canChoose={canChooseSide({ room, side: "black", userId, isChoosing: choosingSide !== null })}
+            color="black"
+            isChoosing={choosingSide === "black"}
+            isCurrentTurn={room?.status === "playing" && room.current_turn === "black"}
+            isYou={myColor === "black"}
+            onChooseSide={() => chooseSide("black")}
+            profile={blackProfile}
+          />
+          <PlayerPanel
+            canChoose={canChooseSide({ room, side: "white", userId, isChoosing: choosingSide !== null })}
+            color="white"
+            isChoosing={choosingSide === "white"}
+            isCurrentTurn={room?.status === "playing" && room.current_turn === "white"}
+            isYou={myColor === "white"}
+            onChooseSide={() => chooseSide("white")}
+            profile={whiteProfile}
+          />
           {room?.status === "finished" ? (
             <button className="primaryButton" disabled={isSubmitting} onClick={requestRestart} type="button">
               재시작 요청
@@ -339,14 +384,20 @@ export function RoomClient({ code }: { code: string }) {
 }
 
 function PlayerPanel({
+  canChoose,
   color,
+  isChoosing,
   isCurrentTurn,
   isYou,
+  onChooseSide,
   profile
 }: {
+  canChoose: boolean;
   color: StoneColor;
+  isChoosing: boolean;
   isCurrentTurn: boolean;
   isYou: boolean;
+  onChooseSide: () => void;
   profile: ProfileRecord | null;
 }) {
   return (
@@ -366,8 +417,13 @@ function PlayerPanel({
         <span>승점</span>
       </div>
       <p className="recordText">
-        {profile ? `${profile.wins}승 ${profile.losses}패 ${profile.draws}무` : "상대 입장 대기"}
+        {profile ? `${profile.wins}승 ${profile.losses}패 ${profile.draws}무` : "자리 비어 있음"}
       </p>
+      {canChoose ? (
+        <button className="sideButton" disabled={isChoosing} onClick={onChooseSide} type="button">
+          {isChoosing ? "선택 중" : `${color === "black" ? "흑" : "백"} 선택`}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -394,7 +450,7 @@ function statusText(room: RoomRecord | null): string {
   }
 
   if (room.status === "waiting") {
-    return "상대 대기";
+    return "자리 선택";
   }
 
   if (room.status === "finished") {
@@ -410,7 +466,7 @@ function turnText(room: RoomRecord | null, myColor: StoneColor | null): string {
   }
 
   if (room.status === "waiting") {
-    return "방 코드를 공유해 상대를 초대하세요.";
+    return "흑/백 자리를 선택하세요. 양쪽이 채워지면 바로 시작됩니다.";
   }
 
   if (room.status === "finished") {
