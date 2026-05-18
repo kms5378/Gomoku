@@ -166,6 +166,17 @@ button:disabled {
   color: white;
 }
 
+.linkButton {
+  display: grid;
+  min-height: 48px;
+  place-items: center;
+  text-decoration: none;
+}
+
+.headerAction {
+  min-width: 120px;
+}
+
 .notice,
 .errorText {
   margin: 0;
@@ -211,6 +222,12 @@ button:disabled {
   color: var(--accent);
   font-weight: 800;
   text-decoration: none;
+}
+
+.topLinks {
+  display: flex;
+  gap: 14px;
+  align-items: center;
 }
 
 .statusPill {
@@ -459,9 +476,107 @@ button:disabled {
   outline-offset: 2px;
 }
 
+.rankingLayout {
+  width: min(1000px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+.rankingSurface {
+  display: grid;
+  gap: 16px;
+}
+
+.myRankBar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  border: 1px solid rgba(94, 62, 27, 0.14);
+  border-radius: 8px;
+  background: rgba(94, 62, 27, 0.16);
+}
+
+.myRankBar > div {
+  display: grid;
+  gap: 6px;
+  min-height: 84px;
+  padding: 16px;
+  background: rgba(255, 250, 240, 0.94);
+}
+
+.myRankBar span,
+.rankingTable th {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.myRankBar strong {
+  font-size: 24px;
+}
+
+.rankingTableShell {
+  overflow: auto;
+  border: 1px solid rgba(94, 62, 27, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 250, 240, 0.94);
+  box-shadow: var(--shadow);
+}
+
+.rankingTable {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+.rankingTable th,
+.rankingTable td {
+  padding: 16px;
+  border-bottom: 1px solid rgba(94, 62, 27, 0.12);
+  text-align: left;
+}
+
+.rankingTable tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.rankingTable tbody tr:nth-child(even) {
+  background: rgba(216, 166, 87, 0.08);
+}
+
+.rankingTable td:first-child {
+  width: 80px;
+  font-weight: 900;
+}
+
+.currentPlayerRow {
+  background: rgba(15, 118, 110, 0.12) !important;
+}
+
+.rankNickname {
+  font-weight: 800;
+}
+
+.youBadge {
+  display: inline-grid;
+  min-width: 28px;
+  min-height: 24px;
+  margin-left: 8px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 @media (max-width: 860px) {
   .homeLayout,
-  .roomLayout {
+  .roomLayout,
+  .rankingLayout {
     padding: 20px;
   }
 
@@ -477,6 +592,10 @@ button:disabled {
   .roomHeader {
     align-items: start;
     flex-direction: column;
+  }
+
+  .myRankBar {
+    grid-template-columns: 1fr;
   }
 
   .scoreRail {

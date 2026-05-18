@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig, normalizeRpcRow } from "@/src/lib/supabase/client";
 import type { RoomRecord } from "@/src/lib/types";
@@ -125,6 +126,9 @@ export function HomeClient() {
             <button className="primaryButton" disabled={!isConfigured || isSubmitting} onClick={createRoom} type="button">
               방 만들기
             </button>
+            <Link className="secondaryButton linkButton" href="/ranking">
+              랭킹 보기
+            </Link>
             <div className="joinInline">
               <input
                 aria-label="방 코드"

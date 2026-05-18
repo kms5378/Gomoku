@@ -327,9 +327,14 @@ export function RoomClient({ code }: { code: string }) {
     <main className="roomLayout">
       <header className="roomHeader">
         <div>
-          <Link className="backLink" href="/">
-            로비
-          </Link>
+          <nav className="topLinks" aria-label="방 이동">
+            <Link className="backLink" href="/">
+              로비
+            </Link>
+            <Link className="backLink" href="/ranking">
+              랭킹
+            </Link>
+          </nav>
           <h1>방 {normalizedCode}</h1>
         </div>
         <div className={`statusPill ${room?.status ?? "waiting"}`}>{statusText(room)}</div>
