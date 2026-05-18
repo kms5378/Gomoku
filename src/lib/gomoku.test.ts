@@ -20,6 +20,14 @@ describe("gomoku rules", () => {
     expect(board.flat().every((cell) => cell === null)).toBe(true);
   });
 
+  it("creates independent row arrays", () => {
+    const board = createEmptyBoard();
+
+    board[0][0] = "black";
+
+    expect(board[1][0]).toBeNull();
+  });
+
   it("places stones without mutating the original board", () => {
     const board = createEmptyBoard();
     const nextBoard = placeStone(board, { row: 7, col: 7, color: "black" });
@@ -35,6 +43,7 @@ describe("gomoku rules", () => {
     expect(() => placeStone(board, { row: -1, col: 0, color: "white" })).toThrow(/outside/i);
     expect(isInsideBoard(14, 14)).toBe(true);
     expect(isInsideBoard(15, 14)).toBe(false);
+    expect(isInsideBoard(1.5, 2)).toBe(false);
   });
 
   it("detects horizontal, vertical, and diagonal wins", () => {
@@ -73,6 +82,35 @@ describe("gomoku rules", () => {
     );
 
     expect(detectWinner(board, { row: 5, col: 5, color: "black" })?.line).toHaveLength(6);
+  });
+
+  it("does not report wins for four stones or interrupted lines", () => {
+    const fourOnly = buildBoardFromMoves(
+      Array.from({ length: 4 }, (_, col) => ({ row: 4, col, color: "black" as const, move_number: col + 1 }))
+    );
+    const interrupted = buildBoardFromMoves([
+      { row: 8, col: 1, color: "white" as const, move_number: 1 },
+      { row: 8, col: 2, color: "white" as const, move_number: 2 },
+      { row: 8, col: 3, color: "black" as const, move_number: 3 },
+      { row: 8, col: 4, color: "white" as const, move_number: 4 },
+      { row: 8, col: 5, color: "white" as const, move_number: 5 },
+      { row: 8, col: 6, color: "white" as const, move_number: 6 }
+    ]);
+
+    expect(detectWinner(fourOnly, { row: 4, col: 3, color: "black" })).toBeNull();
+    expect(detectWinner(interrupted, { row: 8, col: 6, color: "white" })).toBeNull();
+  });
+
+  it("builds boards in move order and ignores invalid duplicate source moves", () => {
+    const board = buildBoardFromMoves([
+      { row: 0, col: 1, color: "white", move_number: 2 },
+      { row: 0, col: 0, color: "black", move_number: 1 },
+      { row: 0, col: 0, color: "white", move_number: 3 },
+      { row: 99, col: 99, color: "black", move_number: 4 }
+    ]);
+
+    expect(board[0][0]).toBe("black");
+    expect(board[0][1]).toBe("white");
   });
 
   it("detects draw boards and score deltas", () => {

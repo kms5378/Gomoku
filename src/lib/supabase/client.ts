@@ -22,7 +22,7 @@ export function getSupabaseClient(): SupabaseClient | null {
 }
 
 function getSupabaseBrowserKey(): string | undefined {
-  return process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  return process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 }
 
 export async function ensureAnonymousSession(client: SupabaseClient): Promise<Session> {
