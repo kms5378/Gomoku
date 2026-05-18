@@ -26,4 +26,10 @@ describe("board css contract", () => {
     expect(blockFor(".starPoint")).toContain("aspect-ratio: 1");
     expect(blockFor(".boardCell:not(:disabled):hover::after")).toContain("aspect-ratio: 1");
   });
+
+  it("keeps last move and forbidden move indicators circular or square", () => {
+    expect(blockFor(".lastMoveMarker")).toContain("aspect-ratio: 1");
+    expect(blockFor(".forbiddenMark")).toContain("aspect-ratio: 1");
+    expect(blockFor(".boardCell.forbiddenCell::before")).toContain("aspect-ratio: 1");
+  });
 });

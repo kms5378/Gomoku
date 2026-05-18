@@ -6,7 +6,7 @@ import { buildBoardFromMoves, detectWinner, getForbiddenBlackMove, type StoneCol
 import { playStoneSound } from "@/src/lib/sound";
 import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig, normalizeRpcRow } from "@/src/lib/supabase/client";
 import type { MoveRecord, ProfileRecord, RoomRecord } from "@/src/lib/types";
-import { GomokuBoard } from "./GomokuBoard";
+import { type ForbiddenBoardCell, GomokuBoard } from "./GomokuBoard";
 
 const NICKNAME_KEY = "gomoku:nickname";
 
@@ -167,6 +167,29 @@ export function RoomClient({ code }: { code: string }) {
       : undefined;
   const myColor = resolvePlayerColor(room, userId);
   const canPlay = Boolean(room && myColor && room.status === "playing" && room.current_turn === myColor && !isSubmitting);
+  const forbiddenCells = useMemo<ForbiddenBoardCell[]>(() => {
+    if (!room || myColor !== "black" || room.status !== "playing" || room.current_turn !== "black") {
+      return [];
+    }
+
+    const cells: ForbiddenBoardCell[] = [];
+
+    for (let row = 0; row < board.length; row += 1) {
+      for (let col = 0; col < board[row].length; col += 1) {
+        if (board[row][col] !== null) {
+          continue;
+        }
+
+        const reason = getForbiddenBlackMove(board, { row, col, color: "black" });
+
+        if (reason) {
+          cells.push({ row, col, reason });
+        }
+      }
+    }
+
+    return cells;
+  }, [board, myColor, room]);
 
   async function submitMove(row: number, col: number) {
     if (!client || !room || !canPlay || !myColor) {
@@ -295,7 +318,14 @@ export function RoomClient({ code }: { code: string }) {
         </aside>
 
         <div className="boardColumn">
-          <GomokuBoard board={board} disabled={!canPlay} onPlaceStone={submitMove} winningCells={winningLine} />
+          <GomokuBoard
+            board={board}
+            disabled={!canPlay}
+            forbiddenCells={forbiddenCells}
+            lastMove={lastMove}
+            onPlaceStone={submitMove}
+            winningCells={winningLine}
+          />
           <p className="turnText">{turnText(room, myColor)}</p>
           {error ? (
             <p className="errorText" role="alert">
