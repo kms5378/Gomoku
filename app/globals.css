@@ -305,6 +305,7 @@ button:disabled {
 .playerName,
 .playerMeta,
 .recordText,
+.connectionText,
 .turnText {
   margin: 0;
 }
@@ -314,9 +315,18 @@ button:disabled {
 }
 
 .playerMeta,
+.connectionText,
 .recordText,
 .turnText {
   color: var(--muted);
+}
+
+.connectionText {
+  border-radius: 6px;
+  background: rgba(15, 118, 110, 0.08);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .ratingBlock {

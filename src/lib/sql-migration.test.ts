@@ -11,7 +11,11 @@ const sideSelectionMigration = readFileSync(
   join(process.cwd(), "supabase/migrations/202605180002_choose_side.sql"),
   "utf8"
 );
-const migration = `${initialMigration}\n${forbiddenMoveMigration}\n${sideSelectionMigration}`;
+const forfeitMigration = readFileSync(
+  join(process.cwd(), "supabase/migrations/202605190001_forfeit_on_disconnect.sql"),
+  "utf8"
+);
+const migration = `${initialMigration}\n${forbiddenMoveMigration}\n${sideSelectionMigration}\n${forfeitMigration}`;
 
 describe("supabase migration contract", () => {
   it("defines the required room tables and RPCs", () => {
@@ -24,6 +28,8 @@ describe("supabase migration contract", () => {
     expect(migration).toContain("create or replace function public.choose_side");
     expect(migration).toContain("create or replace function public.submit_move");
     expect(migration).toContain("create or replace function public.request_restart");
+    expect(migration).toContain("create or replace function public.touch_room_presence");
+    expect(migration).toContain("create or replace function public.claim_forfeit_win");
   });
 
   it("guards important edge cases in the database layer", () => {
@@ -54,5 +60,18 @@ describe("supabase migration contract", () => {
     expect(migration).toContain("status = case");
     expect(migration).toContain("black_player is null or white_player is null");
     expect(migration).toContain("grant execute on function public.choose_side(text, public.stone_color) to authenticated");
+  });
+
+  it("marks a stale opponent as a forfeit loss during active games", () => {
+    expect(migration).toContain("create table if not exists public.room_presence");
+    expect(migration).toContain("last_seen_at timestamptz not null default now()");
+    expect(migration).toContain("Opponent is still connected.");
+    expect(migration).toContain("Opponent connection has not been observed.");
+    expect(migration).toContain("v_loser_last_seen > now() - interval '15 seconds'");
+    expect(migration).toContain("v_room.black_player is distinct from v_user");
+    expect(migration).toContain("v_room.white_player is distinct from v_user");
+    expect(migration).toContain("Only room players can claim forfeit.");
+    expect(migration).toContain("grant execute on function public.touch_room_presence(text) to authenticated");
+    expect(migration).toContain("grant execute on function public.claim_forfeit_win(text) to authenticated");
   });
 });

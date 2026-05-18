@@ -39,3 +39,9 @@ export type MoveRecord = {
   move_number: number;
   created_at: string;
 };
+
+export type RoomPresenceRecord = {
+  room_id: string;
+  player_id: string;
+  last_seen_at: string;
+};

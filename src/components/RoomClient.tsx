@@ -2,16 +2,23 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import {
+  PRESENCE_HEARTBEAT_MS,
+  canClaimForfeit,
+  getOpponentPlayerId,
+  millisecondsUntilForfeit
+} from "@/src/lib/forfeit";
 import { buildBoardFromMoves, detectWinner, getForbiddenBlackMove, type StoneColor } from "@/src/lib/gomoku";
 import { canChooseSide } from "@/src/lib/room-rules";
 import { playStoneSound } from "@/src/lib/sound";
 import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig, normalizeRpcRow } from "@/src/lib/supabase/client";
-import type { MoveRecord, ProfileRecord, RoomRecord } from "@/src/lib/types";
+import type { MoveRecord, ProfileRecord, RoomPresenceRecord, RoomRecord } from "@/src/lib/types";
 import { type ForbiddenBoardCell, GomokuBoard } from "./GomokuBoard";
 
 const NICKNAME_KEY = "gomoku:nickname";
 
 type ProfileMap = Record<string, ProfileRecord>;
+type PresenceMap = Record<string, RoomPresenceRecord>;
 
 export function RoomClient({ code }: { code: string }) {
   const client = useMemo(() => getSupabaseClient(), []);
@@ -21,11 +28,15 @@ export function RoomClient({ code }: { code: string }) {
   const [room, setRoom] = useState<RoomRecord | null>(null);
   const [moves, setMoves] = useState<MoveRecord[]>([]);
   const [profiles, setProfiles] = useState<ProfileMap>({});
+  const [presenceByPlayer, setPresenceByPlayer] = useState<PresenceMap>({});
   const [isJoining, setIsJoining] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isClaimingForfeit, setIsClaimingForfeit] = useState(false);
   const [choosingSide, setChoosingSide] = useState<StoneColor | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const joinAttemptedRef = useRef(false);
+  const lastForfeitClaimAtRef = useRef(0);
 
   const normalizedCode = code.toUpperCase();
 
@@ -71,6 +82,18 @@ export function RoomClient({ code }: { code: string }) {
 
         setProfiles(
           Object.fromEntries(((profilesResponse.data ?? []) as ProfileRecord[]).map((profile) => [profile.id, profile]))
+        );
+      }
+
+      const presenceResponse = await client.from("room_presence").select("*").eq("room_id", nextRoom.id);
+
+      if (presenceResponse.error) {
+        setPresenceByPlayer({});
+      } else {
+        setPresenceByPlayer(
+          Object.fromEntries(
+            ((presenceResponse.data ?? []) as RoomPresenceRecord[]).map((presence) => [presence.player_id, presence])
+          )
         );
       }
     },
@@ -154,6 +177,11 @@ export function RoomClient({ code }: { code: string }) {
           setError(subscriptionError instanceof Error ? subscriptionError.message : "착수 상태를 갱신하지 못했습니다.");
         });
       })
+      .on("postgres_changes", { event: "*", schema: "public", table: "room_presence", filter: `room_id=eq.${room.id}` }, () => {
+        void refreshRoom(room.id).catch((subscriptionError) => {
+          setError(subscriptionError instanceof Error ? subscriptionError.message : "접속 상태를 갱신하지 못했습니다.");
+        });
+      })
       .subscribe();
 
     return () => {
@@ -169,6 +197,10 @@ export function RoomClient({ code }: { code: string }) {
       : undefined;
   const myColor = resolvePlayerColor(room, userId);
   const canPlay = Boolean(room && myColor && room.status === "playing" && room.current_turn === myColor && !isSubmitting);
+  const opponentId = getOpponentPlayerId(room, myColor);
+  const opponentLastSeenAt = opponentId ? (presenceByPlayer[opponentId]?.last_seen_at ?? null) : null;
+  const remainingForfeitMs = millisecondsUntilForfeit(opponentLastSeenAt, nowMs);
+  const opponentConnectionMessage = connectionText(room, myColor, opponentLastSeenAt, remainingForfeitMs, isClaimingForfeit);
   const forbiddenCells = useMemo<ForbiddenBoardCell[]>(() => {
     if (!room || myColor !== "black" || room.status !== "playing" || room.current_turn !== "black") {
       return [];
@@ -192,6 +224,97 @@ export function RoomClient({ code }: { code: string }) {
 
     return cells;
   }, [board, myColor, room]);
+
+  const touchPresence = useCallback(async () => {
+    if (!client || !room || room.status !== "playing" || !myColor) {
+      return;
+    }
+
+    const { error: presenceError } = await client.rpc("touch_room_presence", {
+      p_code: room.code
+    });
+
+    if (presenceError) {
+      throw new Error(presenceError.message);
+    }
+  }, [client, myColor, room]);
+
+  useEffect(() => {
+    if (room?.status !== "playing") {
+      return;
+    }
+
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+
+    return () => window.clearInterval(timer);
+  }, [room?.status]);
+
+  useEffect(() => {
+    if (!room || room.status !== "playing" || !myColor) {
+      return;
+    }
+
+    const runTouchPresence = () => {
+      void touchPresence().catch((presenceError) => {
+        setError(presenceError instanceof Error ? presenceError.message : "접속 상태를 갱신하지 못했습니다.");
+      });
+    };
+    const touchWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        runTouchPresence();
+      }
+    };
+
+    runTouchPresence();
+    const timer = window.setInterval(runTouchPresence, PRESENCE_HEARTBEAT_MS);
+    window.addEventListener("visibilitychange", touchWhenVisible);
+    window.addEventListener("focus", runTouchPresence);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("visibilitychange", touchWhenVisible);
+      window.removeEventListener("focus", runTouchPresence);
+    };
+  }, [myColor, room, touchPresence]);
+
+  useEffect(() => {
+    if (
+      !client ||
+      !room ||
+      !canClaimForfeit({ room, myColor, opponentLastSeenAt, nowMs, isClaiming: isClaimingForfeit }) ||
+      nowMs - lastForfeitClaimAtRef.current < PRESENCE_HEARTBEAT_MS
+    ) {
+      return;
+    }
+
+    lastForfeitClaimAtRef.current = nowMs;
+    setIsClaimingForfeit(true);
+
+    async function claimForfeitWin() {
+      if (!client || !room) {
+        return;
+      }
+
+      try {
+        const { data, error: rpcError } = await client.rpc("claim_forfeit_win", {
+          p_code: room.code
+        });
+
+        if (rpcError) {
+          throw new Error(rpcError.message);
+        }
+
+        const nextRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
+        await refreshRoom(nextRoom?.id ?? room.id);
+      } catch (claimError) {
+        setError(claimError instanceof Error ? claimError.message : "상대 이탈 패배 판정을 처리하지 못했습니다.");
+      } finally {
+        setIsClaimingForfeit(false);
+      }
+    }
+
+    void claimForfeitWin();
+  }, [client, isClaimingForfeit, myColor, nowMs, opponentLastSeenAt, refreshRoom, room]);
 
   async function submitMove(row: number, col: number) {
     if (!client || !room || !canPlay || !myColor) {
@@ -377,6 +500,7 @@ export function RoomClient({ code }: { code: string }) {
             winningCells={winningLine}
           />
           <p className="turnText">{turnText(room, myColor)}</p>
+          {opponentConnectionMessage ? <p className="connectionText">{opponentConnectionMessage}</p> : null}
           {error ? (
             <p className="errorText" role="alert">
               {error}
@@ -487,4 +611,30 @@ function turnText(room: RoomRecord | null, myColor: StoneColor | null): string {
   }
 
   return room.current_turn === myColor ? "내 차례입니다." : "상대 차례입니다.";
+}
+
+function connectionText(
+  room: RoomRecord | null,
+  myColor: StoneColor | null,
+  opponentLastSeenAt: string | null,
+  remainingForfeitMs: number | null,
+  isClaimingForfeit: boolean
+): string | null {
+  if (!room || room.status !== "playing" || !myColor) {
+    return null;
+  }
+
+  if (isClaimingForfeit || remainingForfeitMs === 0) {
+    return "상대 연결이 끊겨 패배 처리 중입니다.";
+  }
+
+  if (!opponentLastSeenAt) {
+    return "상대 접속 상태를 확인하는 중입니다.";
+  }
+
+  if (remainingForfeitMs !== null && remainingForfeitMs <= 5_000) {
+    return `상대 연결이 불안정합니다. ${Math.ceil(remainingForfeitMs / 1000)}초 후 이탈 패배 처리됩니다.`;
+  }
+
+  return null;
 }
