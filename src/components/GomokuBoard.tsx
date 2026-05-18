@@ -7,6 +7,8 @@ type GomokuBoardProps = {
   onPlaceStone: (row: number, col: number) => void;
 };
 
+const STAR_POINTS = new Set(["3:3", "3:7", "3:11", "7:3", "7:7", "7:11", "11:3", "11:7", "11:11"]);
+
 export function GomokuBoard({ board, disabled, winningCells = [], onPlaceStone }: GomokuBoardProps) {
   const winningSet = new Set(winningCells.map((cell) => `${cell.row}:${cell.col}`));
 
@@ -17,6 +19,7 @@ export function GomokuBoard({ board, disabled, winningCells = [], onPlaceStone }
           Array.from({ length: BOARD_SIZE }).map((__, col) => {
             const stone = board[row][col];
             const isWinning = winningSet.has(`${row}:${col}`);
+            const isStarPoint = STAR_POINTS.has(`${row}:${col}`);
 
             return (
               <button
@@ -27,6 +30,7 @@ export function GomokuBoard({ board, disabled, winningCells = [], onPlaceStone }
                 onClick={() => onPlaceStone(row, col)}
                 type="button"
               >
+                {isStarPoint ? <span className="starPoint" /> : null}
                 {stone ? <span className={`stone ${stone}${isWinning ? " winning" : ""}`} /> : null}
               </button>
             );

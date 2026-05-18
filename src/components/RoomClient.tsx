@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { buildBoardFromMoves, detectWinner, type StoneColor } from "@/src/lib/gomoku";
+import { buildBoardFromMoves, detectWinner, getForbiddenBlackMove, type StoneColor } from "@/src/lib/gomoku";
 import { playStoneSound } from "@/src/lib/sound";
 import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig, normalizeRpcRow } from "@/src/lib/supabase/client";
 import type { MoveRecord, ProfileRecord, RoomRecord } from "@/src/lib/types";
@@ -169,7 +169,7 @@ export function RoomClient({ code }: { code: string }) {
   const canPlay = Boolean(room && myColor && room.status === "playing" && room.current_turn === myColor && !isSubmitting);
 
   async function submitMove(row: number, col: number) {
-    if (!client || !room || !canPlay) {
+    if (!client || !room || !canPlay || !myColor) {
       return;
     }
 
@@ -177,6 +177,12 @@ export function RoomClient({ code }: { code: string }) {
     setIsSubmitting(true);
 
     try {
+      const forbiddenReason = getForbiddenBlackMove(board, { row, col, color: myColor });
+
+      if (forbiddenReason) {
+        throw new Error(forbiddenReason === "double-three" ? "흑 3x3 금수입니다." : "흑 4x4 금수입니다.");
+      }
+
       const { error: rpcError } = await client.rpc("submit_move", {
         p_code: room.code,
         p_row: row,

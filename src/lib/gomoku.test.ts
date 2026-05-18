@@ -4,6 +4,7 @@ import {
   buildBoardFromMoves,
   createEmptyBoard,
   detectWinner,
+  getForbiddenBlackMove,
   isBoardFull,
   isInsideBoard,
   nextStone,
@@ -82,6 +83,55 @@ describe("gomoku rules", () => {
     );
 
     expect(detectWinner(board, { row: 5, col: 5, color: "black" })?.line).toHaveLength(6);
+  });
+
+  it("forbids black double-three moves", () => {
+    const board = buildBoardFromMoves([
+      { row: 7, col: 6, color: "black", move_number: 1 },
+      { row: 7, col: 8, color: "black", move_number: 2 },
+      { row: 6, col: 7, color: "black", move_number: 3 },
+      { row: 8, col: 7, color: "black", move_number: 4 }
+    ]);
+
+    expect(getForbiddenBlackMove(board, { row: 7, col: 7, color: "black" })).toBe("double-three");
+  });
+
+  it("forbids black double-four moves", () => {
+    const board = buildBoardFromMoves([
+      { row: 7, col: 4, color: "black", move_number: 1 },
+      { row: 7, col: 5, color: "black", move_number: 2 },
+      { row: 7, col: 6, color: "black", move_number: 3 },
+      { row: 4, col: 7, color: "black", move_number: 4 },
+      { row: 5, col: 7, color: "black", move_number: 5 },
+      { row: 6, col: 7, color: "black", move_number: 6 }
+    ]);
+
+    expect(getForbiddenBlackMove(board, { row: 7, col: 7, color: "black" })).toBe("double-four");
+  });
+
+  it("does not apply double-three or double-four rules to white", () => {
+    const board = buildBoardFromMoves([
+      { row: 7, col: 6, color: "white", move_number: 1 },
+      { row: 7, col: 8, color: "white", move_number: 2 },
+      { row: 6, col: 7, color: "white", move_number: 3 },
+      { row: 8, col: 7, color: "white", move_number: 4 }
+    ]);
+
+    expect(getForbiddenBlackMove(board, { row: 7, col: 7, color: "white" })).toBeNull();
+  });
+
+  it("allows black winning moves even when they also create another threat", () => {
+    const board = buildBoardFromMoves([
+      { row: 7, col: 3, color: "black", move_number: 1 },
+      { row: 7, col: 4, color: "black", move_number: 2 },
+      { row: 7, col: 5, color: "black", move_number: 3 },
+      { row: 7, col: 6, color: "black", move_number: 4 },
+      { row: 4, col: 7, color: "black", move_number: 5 },
+      { row: 5, col: 7, color: "black", move_number: 6 },
+      { row: 6, col: 7, color: "black", move_number: 7 }
+    ]);
+
+    expect(getForbiddenBlackMove(board, { row: 7, col: 7, color: "black" })).toBeNull();
   });
 
   it("does not report wins for four stones or interrupted lines", () => {

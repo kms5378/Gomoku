@@ -16,6 +16,8 @@ export type WinningLine = {
   line: Array<{ row: number; col: number }>;
 };
 
+export type ForbiddenBlackMoveReason = "double-three" | "double-four";
+
 const DIRECTIONS = [
   { row: 0, col: 1 },
   { row: 1, col: 0 },
@@ -69,6 +71,36 @@ export function detectWinner(board: Board, lastMove: MoveInput, target = WIN_LEN
   return null;
 }
 
+export function getForbiddenBlackMove(board: Board, move: MoveInput): ForbiddenBlackMoveReason | null {
+  if (move.color !== "black") {
+    return null;
+  }
+
+  const nextBoard = placeStone(board, move);
+
+  if (detectWinner(nextBoard, move)) {
+    return null;
+  }
+
+  const fourDirections = DIRECTIONS.filter((direction) =>
+    directionHasFourThreat(nextBoard, move.row, move.col, direction.row, direction.col)
+  ).length;
+
+  if (fourDirections >= 2) {
+    return "double-four";
+  }
+
+  const openThreeDirections = DIRECTIONS.filter((direction) =>
+    directionHasOpenThreeThreat(nextBoard, move.row, move.col, direction.row, direction.col)
+  ).length;
+
+  if (openThreeDirections >= 2) {
+    return "double-three";
+  }
+
+  return null;
+}
+
 export function isBoardFull(board: Board): boolean {
   return board.every((row) => row.every(Boolean));
 }
@@ -117,4 +149,94 @@ function collectLine(
   }
 
   return stones;
+}
+
+function directionHasFourThreat(
+  board: Board,
+  row: number,
+  col: number,
+  rowDirection: number,
+  colDirection: number
+): boolean {
+  return scanEmptyCandidates(board, row, col, rowDirection, colDirection).some((candidate) => {
+    const candidateBoard = placeStone(board, { ...candidate, color: "black" });
+    return countLineLength(candidateBoard, candidate.row, candidate.col, rowDirection, colDirection, "black") >= WIN_LENGTH;
+  });
+}
+
+function directionHasOpenThreeThreat(
+  board: Board,
+  row: number,
+  col: number,
+  rowDirection: number,
+  colDirection: number
+): boolean {
+  return scanEmptyCandidates(board, row, col, rowDirection, colDirection).some((candidate) => {
+    const candidateBoard = placeStone(board, { ...candidate, color: "black" });
+    return hasOpenFour(candidateBoard, candidate.row, candidate.col, rowDirection, colDirection);
+  });
+}
+
+function scanEmptyCandidates(
+  board: Board,
+  row: number,
+  col: number,
+  rowDirection: number,
+  colDirection: number
+): Array<{ row: number; col: number }> {
+  const candidates: Array<{ row: number; col: number }> = [];
+
+  for (let offset = -4; offset <= 4; offset += 1) {
+    const candidate = {
+      row: row + rowDirection * offset,
+      col: col + colDirection * offset
+    };
+
+    if (isInsideBoard(candidate.row, candidate.col, board.length) && board[candidate.row][candidate.col] === null) {
+      candidates.push(candidate);
+    }
+  }
+
+  return candidates;
+}
+
+function hasOpenFour(board: Board, row: number, col: number, rowDirection: number, colDirection: number): boolean {
+  const backward = collectLine(board, row, col, -rowDirection, -colDirection, "black");
+  const forward = collectLine(board, row, col, rowDirection, colDirection, "black");
+  const line = [...backward.reverse(), { row, col }, ...forward];
+
+  if (line.length !== 4) {
+    return false;
+  }
+
+  const before = {
+    row: line[0].row - rowDirection,
+    col: line[0].col - colDirection
+  };
+  const after = {
+    row: line[line.length - 1].row + rowDirection,
+    col: line[line.length - 1].col + colDirection
+  };
+
+  return (
+    isInsideBoard(before.row, before.col, board.length) &&
+    isInsideBoard(after.row, after.col, board.length) &&
+    board[before.row][before.col] === null &&
+    board[after.row][after.col] === null
+  );
+}
+
+function countLineLength(
+  board: Board,
+  row: number,
+  col: number,
+  rowDirection: number,
+  colDirection: number,
+  color: StoneColor
+): number {
+  return (
+    1 +
+    collectLine(board, row, col, rowDirection, colDirection, color).length +
+    collectLine(board, row, col, -rowDirection, -colDirection, color).length
+  );
 }
