@@ -1,16 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { ensureGomokuAccount, fetchGomokuRanking, hasGomokuServerConfig } from "@/src/lib/gomoku-api";
 import { formatWinRate, rankProfiles, type RankedProfile } from "@/src/lib/ranking";
-import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig } from "@/src/lib/supabase/client";
-import type { ProfileRecord } from "@/src/lib/types";
-
-const RANKING_LIMIT = 100;
 
 export function RankingClient() {
-  const client = useMemo(() => getSupabaseClient(), []);
-  const isConfigured = hasSupabaseConfig();
+  const isConfigured = hasGomokuServerConfig();
   const [entries, setEntries] = useState<RankedProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +15,7 @@ export function RankingClient() {
     let isMounted = true;
 
     async function loadRanking() {
-      if (!client || !isConfigured) {
+      if (!isConfigured) {
         setIsLoading(false);
         return;
       }
@@ -28,23 +24,11 @@ export function RankingClient() {
       setIsLoading(true);
 
       try {
-        const session = await ensureAnonymousSession(client);
-        const { data, error: rankingError } = await client
-          .from("profiles")
-          .select("id,nickname,rating,wins,losses,draws")
-          .order("rating", { ascending: false })
-          .order("wins", { ascending: false })
-          .order("draws", { ascending: false })
-          .order("losses", { ascending: true })
-          .order("nickname", { ascending: true })
-          .limit(RANKING_LIMIT);
-
-        if (rankingError) {
-          throw new Error(rankingError.message);
-        }
+        const nickname = window.localStorage.getItem("gomoku:nickname") ?? "Guest";
+        const [account, profiles] = await Promise.all([ensureGomokuAccount(nickname), fetchGomokuRanking()]);
 
         if (isMounted) {
-          setEntries(rankProfiles((data ?? []) as ProfileRecord[], session.user.id));
+          setEntries(rankProfiles(profiles, account.id));
         }
       } catch (rankingLoadError) {
         if (isMounted) {
@@ -62,7 +46,7 @@ export function RankingClient() {
     return () => {
       isMounted = false;
     };
-  }, [client, isConfigured]);
+  }, [isConfigured]);
 
   const myEntry = entries.find((entry) => entry.isCurrentUser);
 
@@ -82,8 +66,7 @@ export function RankingClient() {
 
       {!isConfigured ? (
         <div className="notice" role="status">
-          Supabase 환경 변수가 필요합니다. `NEXT_PUBLIC_SUPABASE_URL`과
-          `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 설정한 뒤 다시 배포하세요.
+          실시간 서버 URL이 필요합니다. `NEXT_PUBLIC_GOMOKU_SERVER_URL`을 설정한 뒤 다시 배포하세요.
         </div>
       ) : null}
 

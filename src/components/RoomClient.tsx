@@ -2,152 +2,161 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { toUserErrorMessage } from "@/src/lib/errors";
 import {
-  PRESENCE_HEARTBEAT_MS,
-  canClaimForfeit,
-  getOpponentPlayerId,
-  millisecondsUntilForfeit
-} from "@/src/lib/forfeit";
-import { shouldSurfaceBackgroundError, toUserErrorMessage } from "@/src/lib/errors";
+  ensureGomokuAccount,
+  getGomokuWebSocketUrl,
+  hasGomokuServerConfig,
+  storeAccountToken,
+  type GameState,
+  type GomokuSocketMessage
+} from "@/src/lib/gomoku-api";
 import { buildBoardFromMoves, detectWinner, getForbiddenBlackMove, type StoneColor } from "@/src/lib/gomoku";
 import { canChooseSide } from "@/src/lib/room-rules";
 import { playStoneSound } from "@/src/lib/sound";
-import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig, normalizeRpcRow } from "@/src/lib/supabase/client";
-import type { MoveRecord, ProfileRecord, RoomPresenceRecord, RoomRecord } from "@/src/lib/types";
+import type { MoveRecord, ProfileRecord, RoomRecord } from "@/src/lib/types";
 import { type ForbiddenBoardCell, GomokuBoard } from "./GomokuBoard";
 
 const NICKNAME_KEY = "gomoku:nickname";
 
 type ProfileMap = Record<string, ProfileRecord>;
-type PresenceMap = Record<string, RoomPresenceRecord>;
+type ConnectRoom = (token: string, nickname: string) => void;
 
 export function RoomClient({ code }: { code: string }) {
-  const client = useMemo(() => getSupabaseClient(), []);
   const [nickname, setNickname] = useState("");
   const [nicknameLoaded, setNicknameLoaded] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [room, setRoom] = useState<RoomRecord | null>(null);
   const [moves, setMoves] = useState<MoveRecord[]>([]);
   const [profiles, setProfiles] = useState<ProfileMap>({});
-  const [presenceByPlayer, setPresenceByPlayer] = useState<PresenceMap>({});
   const [isJoining, setIsJoining] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isClaimingForfeit, setIsClaimingForfeit] = useState(false);
   const [choosingSide, setChoosingSide] = useState<StoneColor | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const joinAttemptedRef = useRef(false);
-  const lastForfeitClaimAtRef = useRef(0);
+  const [isConnected, setIsConnected] = useState(false);
+  const connectRoomRef = useRef<ConnectRoom>(() => undefined);
+  const hasJoinedRef = useRef(false);
+  const hasSeenStateRef = useRef(false);
+  const previousMoveCountRef = useRef(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const shouldReconnectRef = useRef(true);
+  const socketRef = useRef<WebSocket | null>(null);
 
   const normalizedCode = code.toUpperCase();
-  const reportBackgroundError = useCallback((backgroundError: unknown, fallback: string) => {
-    if (!shouldSurfaceBackgroundError(backgroundError)) {
-      return;
+
+  const applyGameState = useCallback((state: GameState) => {
+    const previousMoveCount = previousMoveCountRef.current;
+
+    setRoom(state.room);
+    setMoves(state.moves);
+    setProfiles(state.profiles);
+    setIsSubmitting(false);
+    setChoosingSide(null);
+
+    if (hasSeenStateRef.current && state.moves.length > previousMoveCount) {
+      playStoneSound();
     }
 
-    setError(toUserErrorMessage(backgroundError, fallback));
+    hasSeenStateRef.current = true;
+    previousMoveCountRef.current = state.moves.length;
   }, []);
 
-  const refreshRoom = useCallback(
-    async (roomId?: string) => {
-      if (!client) {
-        return;
-      }
+  const connectRoom = useCallback(
+    (token: string, cleanNickname: string) => {
+      socketRef.current?.close();
+      setIsConnected(false);
 
-      const roomQuery = client.from("rooms").select("*");
-      const roomResponse = roomId
-        ? await roomQuery.eq("id", roomId).single()
-        : await roomQuery.eq("code", normalizedCode).single();
+      const socket = new WebSocket(getGomokuWebSocketUrl());
+      socketRef.current = socket;
 
-      if (roomResponse.error) {
-        throw new Error(roomResponse.error.message);
-      }
+      socket.addEventListener("open", () => {
+        setError(null);
+        setIsConnected(true);
+        setIsJoining(false);
+        socket.send(
+          JSON.stringify({
+            code: normalizedCode,
+            nickname: cleanNickname,
+            token,
+            type: "room:join"
+          })
+        );
+      });
 
-      const nextRoom = roomResponse.data as RoomRecord;
-      setRoom(nextRoom);
+      socket.addEventListener("message", (event) => {
+        const message = JSON.parse(String(event.data)) as GomokuSocketMessage;
 
-      const movesResponse = await client
-        .from("moves")
-        .select("*")
-        .eq("room_id", nextRoom.id)
-        .eq("game_index", nextRoom.game_index)
-        .order("move_number", { ascending: true });
-
-      if (movesResponse.error) {
-        throw new Error(movesResponse.error.message);
-      }
-
-      setMoves((movesResponse.data ?? []) as MoveRecord[]);
-
-      const profileIds = [nextRoom.black_player, nextRoom.white_player].filter(Boolean) as string[];
-
-      if (profileIds.length > 0) {
-        const profilesResponse = await client.from("profiles").select("*").in("id", profileIds);
-
-        if (profilesResponse.error) {
-          throw new Error(profilesResponse.error.message);
+        if (message.type === "account") {
+          setUserId(message.account.id);
+          storeAccountToken(message.account.token);
+          return;
         }
 
-        setProfiles(
-          Object.fromEntries(((profilesResponse.data ?? []) as ProfileRecord[]).map((profile) => [profile.id, profile]))
-        );
-      }
+        if (message.type === "room:state") {
+          applyGameState(message.state);
+          return;
+        }
 
-      const presenceResponse = await client.from("room_presence").select("*").eq("room_id", nextRoom.id);
+        if (message.type === "error") {
+          setError(message.message);
+          setIsSubmitting(false);
+          setChoosingSide(null);
+        }
+      });
 
-      if (presenceResponse.error) {
-        setPresenceByPlayer({});
-      } else {
-        setPresenceByPlayer(
-          Object.fromEntries(
-            ((presenceResponse.data ?? []) as RoomPresenceRecord[]).map((presence) => [presence.player_id, presence])
-          )
-        );
-      }
+      socket.addEventListener("error", () => {
+        setError("실시간 서버에 연결하지 못했습니다. 잠시 후 다시 시도합니다.");
+      });
+
+      socket.addEventListener("close", () => {
+        if (socketRef.current !== socket) {
+          return;
+        }
+
+        setIsConnected(false);
+        setIsJoining(false);
+
+        if (!shouldReconnectRef.current) {
+          return;
+        }
+
+        if (reconnectTimerRef.current) {
+          window.clearTimeout(reconnectTimerRef.current);
+        }
+
+        reconnectTimerRef.current = window.setTimeout(() => {
+          connectRoomRef.current(token, cleanNickname);
+        }, 1000);
+      });
     },
-    [client, normalizedCode]
+    [applyGameState, normalizedCode]
   );
+
+  useEffect(() => {
+    connectRoomRef.current = connectRoom;
+  }, [connectRoom]);
 
   const joinRoom = useCallback(
     async (name: string) => {
-      if (!client) {
-        return;
-      }
-
       setError(null);
       setIsJoining(true);
 
       try {
-        const session = await ensureAnonymousSession(client);
-        setUserId(session.user.id);
         const cleanNickname = name.trim() || "Guest";
         window.localStorage.setItem(NICKNAME_KEY, cleanNickname);
         setNickname(cleanNickname);
 
-        const { data, error: rpcError } = await client.rpc("join_room", {
-          p_code: normalizedCode,
-          p_nickname: cleanNickname
-        });
-
-        if (rpcError) {
-          throw new Error(rpcError.message);
-        }
-
-        const joinedRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
-
-        if (!joinedRoom) {
-          throw new Error("Room join returned no room.");
-        }
-
-        await refreshRoom(joinedRoom.id);
+        const account = await ensureGomokuAccount(cleanNickname);
+        setUserId(account.id);
+        connectRoom(account.token, cleanNickname);
       } catch (joinError) {
-        joinAttemptedRef.current = false;
+        hasJoinedRef.current = false;
         setError(toUserErrorMessage(joinError, "방에 입장하지 못했습니다."));
-      } finally {
+        setIsConnected(false);
         setIsJoining(false);
       }
     },
-    [client, normalizedCode, refreshRoom]
+    [connectRoom]
   );
 
   useEffect(() => {
@@ -160,42 +169,25 @@ export function RoomClient({ code }: { code: string }) {
   }, []);
 
   useEffect(() => {
-    if (!nicknameLoaded || !nickname.trim() || joinAttemptedRef.current || !client) {
+    if (!nicknameLoaded || !nickname.trim() || hasJoinedRef.current) {
       return;
     }
 
-    joinAttemptedRef.current = true;
+    hasJoinedRef.current = true;
     void joinRoom(nickname);
-  }, [client, joinRoom, nickname, nicknameLoaded]);
+  }, [joinRoom, nickname, nicknameLoaded]);
 
   useEffect(() => {
-    if (!client || !room?.id) {
-      return;
-    }
-
-    const channel = client
-      .channel(`room:${room.id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "rooms", filter: `id=eq.${room.id}` }, () => {
-        void refreshRoom(room.id).catch((subscriptionError) => {
-          reportBackgroundError(subscriptionError, "방 상태를 갱신하지 못했습니다.");
-        });
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "moves", filter: `room_id=eq.${room.id}` }, () => {
-        void refreshRoom(room.id).catch((subscriptionError) => {
-          reportBackgroundError(subscriptionError, "착수 상태를 갱신하지 못했습니다.");
-        });
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "room_presence", filter: `room_id=eq.${room.id}` }, () => {
-        void refreshRoom(room.id).catch((subscriptionError) => {
-          reportBackgroundError(subscriptionError, "접속 상태를 갱신하지 못했습니다.");
-        });
-      })
-      .subscribe();
-
     return () => {
-      void client.removeChannel(channel);
+      shouldReconnectRef.current = false;
+
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+      }
+
+      socketRef.current?.close();
     };
-  }, [client, refreshRoom, reportBackgroundError, room?.id]);
+  }, []);
 
   const board = useMemo(() => buildBoardFromMoves(moves), [moves]);
   const lastMove = moves.at(-1);
@@ -204,11 +196,10 @@ export function RoomClient({ code }: { code: string }) {
       ? detectWinner(board, { row: lastMove.row, col: lastMove.col, color: lastMove.color })?.line
       : undefined;
   const myColor = resolvePlayerColor(room, userId);
-  const canPlay = Boolean(room && myColor && room.status === "playing" && room.current_turn === myColor && !isSubmitting);
-  const opponentId = getOpponentPlayerId(room, myColor);
-  const opponentLastSeenAt = opponentId ? (presenceByPlayer[opponentId]?.last_seen_at ?? null) : null;
-  const remainingForfeitMs = millisecondsUntilForfeit(opponentLastSeenAt, nowMs);
-  const opponentConnectionMessage = connectionText(room, myColor, opponentLastSeenAt, remainingForfeitMs, isClaimingForfeit);
+  const canPlay = Boolean(
+    isConnected && room && myColor && room.status === "playing" && room.current_turn === myColor && !isSubmitting
+  );
+  const connectionMessage = connectionText(room, isConnected);
   const forbiddenCells = useMemo<ForbiddenBoardCell[]>(() => {
     if (!room || myColor !== "black" || room.status !== "playing" || room.current_turn !== "black") {
       return [];
@@ -233,104 +224,24 @@ export function RoomClient({ code }: { code: string }) {
     return cells;
   }, [board, myColor, room]);
 
-  const touchPresence = useCallback(async () => {
-    if (!client || !room || room.status !== "playing" || !myColor) {
-      return;
+  function sendGameMessage(payload: Record<string, unknown>): boolean {
+    const socket = socketRef.current;
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setError("실시간 서버에 연결 중입니다. 잠시 후 다시 시도하세요.");
+      return false;
     }
 
-    const { error: presenceError } = await client.rpc("touch_room_presence", {
-      p_code: room.code
-    });
-
-    if (presenceError) {
-      throw new Error(presenceError.message);
-    }
-  }, [client, myColor, room]);
-
-  useEffect(() => {
-    if (room?.status !== "playing") {
-      return;
-    }
-
-    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
-
-    return () => window.clearInterval(timer);
-  }, [room?.status]);
-
-  useEffect(() => {
-    if (!room || room.status !== "playing" || !myColor) {
-      return;
-    }
-
-    const runTouchPresence = () => {
-      void touchPresence().catch((presenceError) => {
-        reportBackgroundError(presenceError, "접속 상태를 갱신하지 못했습니다.");
-      });
-    };
-    const touchWhenVisible = () => {
-      if (document.visibilityState === "visible") {
-        runTouchPresence();
-      }
-    };
-
-    runTouchPresence();
-    const timer = window.setInterval(runTouchPresence, PRESENCE_HEARTBEAT_MS);
-    window.addEventListener("visibilitychange", touchWhenVisible);
-    window.addEventListener("focus", runTouchPresence);
-
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("visibilitychange", touchWhenVisible);
-      window.removeEventListener("focus", runTouchPresence);
-    };
-  }, [myColor, reportBackgroundError, room, touchPresence]);
-
-  useEffect(() => {
-    if (
-      !client ||
-      !room ||
-      !canClaimForfeit({ room, myColor, opponentLastSeenAt, nowMs, isClaiming: isClaimingForfeit }) ||
-      nowMs - lastForfeitClaimAtRef.current < PRESENCE_HEARTBEAT_MS
-    ) {
-      return;
-    }
-
-    lastForfeitClaimAtRef.current = nowMs;
-    setIsClaimingForfeit(true);
-
-    async function claimForfeitWin() {
-      if (!client || !room) {
-        return;
-      }
-
-      try {
-        const { data, error: rpcError } = await client.rpc("claim_forfeit_win", {
-          p_code: room.code
-        });
-
-        if (rpcError) {
-          throw new Error(rpcError.message);
-        }
-
-        const nextRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
-        await refreshRoom(nextRoom?.id ?? room.id);
-      } catch (claimError) {
-        reportBackgroundError(claimError, "상대 이탈 패배 판정을 처리하지 못했습니다.");
-      } finally {
-        setIsClaimingForfeit(false);
-      }
-    }
-
-    void claimForfeitWin();
-  }, [client, isClaimingForfeit, myColor, nowMs, opponentLastSeenAt, refreshRoom, reportBackgroundError, room]);
+    socket.send(JSON.stringify(payload));
+    return true;
+  }
 
   async function submitMove(row: number, col: number) {
-    if (!client || !room || !canPlay || !myColor) {
+    if (!room || !canPlay || !myColor) {
       return;
     }
 
     setError(null);
-    setIsSubmitting(true);
 
     try {
       const forbiddenReason = getForbiddenBlackMove(board, { row, col, color: myColor });
@@ -339,84 +250,40 @@ export function RoomClient({ code }: { code: string }) {
         throw new Error(forbiddenReason === "double-three" ? "흑 3x3 금수입니다." : "흑 4x4 금수입니다.");
       }
 
-      const { error: rpcError } = await client.rpc("submit_move", {
-        p_code: room.code,
-        p_row: row,
-        p_col: col
-      });
-
-      if (rpcError) {
-        throw new Error(rpcError.message);
-      }
-
-      playStoneSound();
-      await refreshRoom(room.id);
+      setIsSubmitting(sendGameMessage({ col, row, type: "move:submit" }));
     } catch (submitError) {
       setError(toUserErrorMessage(submitError, "착수하지 못했습니다."));
-    } finally {
       setIsSubmitting(false);
     }
   }
 
   async function requestRestart() {
-    if (!client || !room) {
+    if (!room) {
       return;
     }
 
     setError(null);
-    setIsSubmitting(true);
-
-    try {
-      const { data, error: rpcError } = await client.rpc("request_restart", {
-        p_code: room.code
-      });
-
-      if (rpcError) {
-        throw new Error(rpcError.message);
-      }
-
-      const nextRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
-      await refreshRoom(nextRoom?.id ?? room.id);
-    } catch (restartError) {
-      setError(toUserErrorMessage(restartError, "재시작 요청을 처리하지 못했습니다."));
-    } finally {
-      setIsSubmitting(false);
-    }
+    setIsSubmitting(sendGameMessage({ type: "room:restart" }));
   }
 
   async function chooseSide(side: StoneColor) {
-    if (!client || !room || !canChooseSide({ room, side, userId, isChoosing: choosingSide !== null })) {
+    if (!room || !canChooseSide({ room, side, userId, isChoosing: choosingSide !== null })) {
       return;
     }
 
     setError(null);
     setChoosingSide(side);
 
-    try {
-      const { data, error: rpcError } = await client.rpc("choose_side", {
-        p_code: room.code,
-        p_side: side
-      });
-
-      if (rpcError) {
-        throw new Error(rpcError.message);
-      }
-
-      const nextRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
-      await refreshRoom(nextRoom?.id ?? room.id);
-    } catch (sideError) {
-      setError(toUserErrorMessage(sideError, "흑/백 선택을 처리하지 못했습니다."));
-    } finally {
+    if (!sendGameMessage({ side, type: "room:chooseSide" })) {
       setChoosingSide(null);
     }
   }
 
-  if (!hasSupabaseConfig()) {
+  if (!hasGomokuServerConfig()) {
     return (
       <main className="roomLayout">
         <div className="notice" role="status">
-          Supabase 환경 변수가 필요합니다. `NEXT_PUBLIC_SUPABASE_URL`과
-          `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 설정한 뒤 다시 배포하세요.
+          실시간 서버 URL이 필요합니다. `NEXT_PUBLIC_GOMOKU_SERVER_URL`을 설정한 뒤 다시 배포하세요.
         </div>
       </main>
     );
@@ -468,7 +335,7 @@ export function RoomClient({ code }: { code: string }) {
           </nav>
           <h1>방 {normalizedCode}</h1>
         </div>
-        <div className={`statusPill ${room?.status ?? "waiting"}`}>{statusText(room)}</div>
+        <div className={`statusPill ${room?.status ?? "waiting"}`}>{statusText(room, isConnected)}</div>
       </header>
 
       <section className="gameSurface">
@@ -492,7 +359,7 @@ export function RoomClient({ code }: { code: string }) {
             profile={whiteProfile}
           />
           {room?.status === "finished" ? (
-            <button className="primaryButton" disabled={isSubmitting} onClick={requestRestart} type="button">
+            <button className="primaryButton" disabled={isSubmitting || !isConnected} onClick={requestRestart} type="button">
               재시작 요청
             </button>
           ) : null}
@@ -508,7 +375,7 @@ export function RoomClient({ code }: { code: string }) {
             winningCells={winningLine}
           />
           <p className="turnText">{turnText(room, myColor)}</p>
-          {opponentConnectionMessage ? <p className="connectionText">{opponentConnectionMessage}</p> : null}
+          {connectionMessage ? <p className="connectionText">{connectionMessage}</p> : null}
           {error ? (
             <p className="errorText" role="alert">
               {error}
@@ -581,9 +448,13 @@ function resolvePlayerColor(room: RoomRecord | null, userId: string | null): Sto
   return null;
 }
 
-function statusText(room: RoomRecord | null): string {
-  if (!room) {
+function statusText(room: RoomRecord | null, isConnected: boolean): string {
+  if (!isConnected) {
     return "연결 중";
+  }
+
+  if (!room) {
+    return "방 입장 중";
   }
 
   if (room.status === "waiting") {
@@ -621,28 +492,10 @@ function turnText(room: RoomRecord | null, myColor: StoneColor | null): string {
   return room.current_turn === myColor ? "내 차례입니다." : "상대 차례입니다.";
 }
 
-function connectionText(
-  room: RoomRecord | null,
-  myColor: StoneColor | null,
-  opponentLastSeenAt: string | null,
-  remainingForfeitMs: number | null,
-  isClaimingForfeit: boolean
-): string | null {
-  if (!room || room.status !== "playing" || !myColor) {
+function connectionText(room: RoomRecord | null, isConnected: boolean): string | null {
+  if (!room || isConnected) {
     return null;
   }
 
-  if (isClaimingForfeit || remainingForfeitMs === 0) {
-    return "상대 연결이 끊겨 패배 처리 중입니다.";
-  }
-
-  if (!opponentLastSeenAt) {
-    return "상대 접속 상태를 확인하는 중입니다.";
-  }
-
-  if (remainingForfeitMs !== null && remainingForfeitMs <= 5_000) {
-    return `상대 연결이 불안정합니다. ${Math.ceil(remainingForfeitMs / 1000)}초 후 이탈 패배 처리됩니다.`;
-  }
-
-  return null;
+  return "실시간 서버에 재연결 중입니다.";
 }

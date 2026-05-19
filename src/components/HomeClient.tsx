@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ensureAnonymousSession, getSupabaseClient, hasSupabaseConfig, normalizeRpcRow } from "@/src/lib/supabase/client";
-import type { RoomRecord } from "@/src/lib/types";
+import { createGomokuRoom, hasGomokuServerConfig } from "@/src/lib/gomoku-api";
 
 const NICKNAME_KEY = "gomoku:nickname";
 
 export function HomeClient() {
   const router = useRouter();
-  const client = useMemo(() => getSupabaseClient(), []);
   const [nickname, setNickname] = useState("");
   const [roomCode, setRoomCode] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -25,42 +23,16 @@ export function HomeClient() {
   }, []);
 
   async function createRoom() {
-    if (!client) {
-      return;
-    }
-
     await runRoomAction(async () => {
-      const session = await ensureAnonymousSession(client);
       const cleanNickname = persistNickname();
-      const { data, error: rpcError } = await client.rpc("create_room", {
-        p_nickname: cleanNickname
-      });
+      const result = await createGomokuRoom(cleanNickname);
 
-      if (rpcError) {
-        throw new Error(rpcError.message);
-      }
-
-      if (!session.user.id) {
-        throw new Error("Anonymous session could not be created.");
-      }
-
-      const room = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
-
-      if (!room) {
-        throw new Error("Room creation returned no room.");
-      }
-
-      router.push(`/room/${room.code}`);
+      router.push(`/room/${result.state.room.code}`);
     });
   }
 
   async function joinRoom() {
-    if (!client) {
-      return;
-    }
-
     await runRoomAction(async () => {
-      await ensureAnonymousSession(client);
       persistNickname();
       const code = roomCode.trim().toUpperCase();
 
@@ -92,7 +64,7 @@ export function HomeClient() {
     return cleanNickname;
   }
 
-  const isConfigured = hasSupabaseConfig();
+  const isConfigured = hasGomokuServerConfig();
 
   return (
     <main className="homeLayout">
@@ -105,8 +77,7 @@ export function HomeClient() {
         <div className="homePanel">
           {!isConfigured ? (
             <div className="notice" role="status">
-              Supabase 환경 변수가 필요합니다. `NEXT_PUBLIC_SUPABASE_URL`과
-              `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 설정한 뒤 다시 배포하세요.
+              실시간 서버 URL이 필요합니다. `NEXT_PUBLIC_GOMOKU_SERVER_URL`을 설정한 뒤 다시 배포하세요.
             </div>
           ) : null}
 

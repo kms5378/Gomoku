@@ -1,18 +1,27 @@
 # 오목 대전
 
-방 코드를 공유해 실시간으로 오목을 둘 수 있는 Next.js + Supabase 앱입니다.
+방 코드를 공유해 실시간으로 오목을 둘 수 있는 Next.js + EC2 WebSocket 앱입니다.
+
+## 구조
+
+- 프론트엔드: Next.js App Router, Vercel 정적/서버리스 배포
+- 실시간 서버: Node.js WebSocket 서버, EC2 systemd 서비스
+- 저장소: SQLite
+- 외부 기본 URL: `https://54.180.79.43.nip.io/gomoku`
+- WebSocket 기본 URL: `wss://54.180.79.43.nip.io/gomoku/ws`
 
 ## 주요 기능
 
-- 15x15 기본 오목, 5개 이상 연속이면 승리
-- Supabase Anonymous Auth 기반 게스트 닉네임
+- 15x15 오목, 5개 이상 연속이면 승리
 - 방 코드 생성, 코드 입장, 2인 실시간 대전
+- 흑/백 자리 선택
+- 흑 3x3, 4x4 금수 표시 및 서버 검증
 - 같은 방에서 승패 결정 후 양쪽 재시작 요청으로 새 게임 시작
-- 승 +3, 무 +1, 패 +0 누적 승점
-- 서버 RPC에서 턴, 중복 착수, 범위, 종료 상태, 참가자 여부 검증
-- 승인된 착수 후 Web Audio API 효과음 재생
+- 승 +3, 무 +1, 패 +0 누적 승점과 랭킹
+- 게임 중 연결이 끊긴 플레이어 15초 후 패배 처리
+- 서버가 승인한 착수 broadcast 이후 효과음 재생
 
-## 로컬 실행
+## 로컬 프론트 실행
 
 ```bash
 npm install
@@ -20,52 +29,82 @@ cp .env.example .env.local
 npm run dev
 ```
 
-`.env.local`에는 Supabase 프로젝트의 공개 값을 넣습니다.
+`.env.local`은 기본 EC2 서버를 그대로 쓰면 생략할 수 있습니다.
 
 ```bash
-NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+NEXT_PUBLIC_GOMOKU_SERVER_URL=https://54.180.79.43.nip.io/gomoku
+NEXT_PUBLIC_GOMOKU_WS_URL=wss://54.180.79.43.nip.io/gomoku/ws
 ```
 
-## Supabase 설정
+## 로컬 실시간 서버 실행
 
-1. Supabase 프로젝트에서 Authentication > Providers > Anonymous Sign-ins를 활성화합니다.
-2. SQL editor 또는 Supabase CLI로 `supabase/migrations/202605160001_init_gomoku.sql`을 적용합니다.
-3. Realtime은 migration에서 `rooms`, `moves`, `profiles` 테이블을 publication에 추가합니다.
-
-Supabase CLI를 쓴다면:
+Node.js `node:sqlite`를 사용하므로 Node 22.5 이상이 필요합니다.
 
 ```bash
-supabase link --project-ref <project-ref>
-supabase db push
+npm install --prefix server
+GOMOKU_DB_PATH=/tmp/gomoku.sqlite PORT=4174 npm --prefix server start
+```
+
+프론트를 로컬 서버에 붙이려면:
+
+```bash
+NEXT_PUBLIC_GOMOKU_SERVER_URL=http://127.0.0.1:4174
+NEXT_PUBLIC_GOMOKU_WS_URL=ws://127.0.0.1:4174/ws
+```
+
+## EC2 배포
+
+오목 서버는 기존 `poket-volley`와 섞지 않고 별도 서비스로 배포합니다.
+
+권장 경로:
+
+- 앱: `/opt/gomoku`
+- DB: `/var/lib/gomoku/gomoku.sqlite`
+- 내부 포트: `127.0.0.1:4174`
+- systemd: `gomoku.service`
+- Caddy path: `/gomoku/*`
+
+예시 Caddy 설정:
+
+```caddyfile
+54.180.79.43.nip.io {
+  reverse_proxy /ws 127.0.0.1:4173
+  reverse_proxy /gomoku/ws 127.0.0.1:4174
+  reverse_proxy /gomoku/api/* 127.0.0.1:4174
+  reverse_proxy /gomoku/healthz 127.0.0.1:4174
+}
+```
+
+예시 systemd:
+
+```ini
+[Unit]
+Description=Gomoku realtime server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/gomoku/server
+Environment=HOST=127.0.0.1
+Environment=PORT=4174
+Environment=GOMOKU_DB_PATH=/var/lib/gomoku/gomoku.sqlite
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=3
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 ## Vercel 배포
 
-Vercel 프로젝트를 만들고 아래 환경 변수를 Production/Preview/Development에 등록합니다.
+Vercel 환경 변수는 기본 EC2 URL을 쓸 경우 없어도 동작합니다. 명시하려면 아래를 등록합니다.
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-
-CLI를 쓴다면:
+- `NEXT_PUBLIC_GOMOKU_SERVER_URL=https://54.180.79.43.nip.io/gomoku`
+- `NEXT_PUBLIC_GOMOKU_WS_URL=wss://54.180.79.43.nip.io/gomoku/ws`
 
 ```bash
-npm i -g vercel
-vercel link
-vercel env add NEXT_PUBLIC_SUPABASE_URL
-vercel env add NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 vercel --prod
-```
-
-## GitHub 연결
-
-```bash
-git init
-git branch -M main
-git remote add origin https://github.com/kms5378/Gomoku.git
-git add .
-git commit -m "feat: build realtime gomoku battle"
-git push -u origin main
 ```
 
 ## 테스트
@@ -77,5 +116,3 @@ npm run test
 npm run test:e2e
 npm run build
 ```
-
-`npm run test:e2e`는 Supabase 환경 변수가 없으면 설정 안내 상태를 검증합니다. 실제 2인 대전 E2E는 Supabase 프로젝트와 환경 변수를 연결한 뒤 실행하세요.

@@ -1,0 +1,16 @@
+[Unit]
+Description=Gomoku realtime server
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/gomoku/server
+Environment=HOST=127.0.0.1
+Environment=PORT=4174
+Environment=GOMOKU_DB_PATH=/var/lib/gomoku/gomoku.sqlite
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=3
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target

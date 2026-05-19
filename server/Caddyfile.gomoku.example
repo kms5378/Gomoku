@@ -1,0 +1,6 @@
+54.180.79.43.nip.io {
+  reverse_proxy /ws 127.0.0.1:4173
+  reverse_proxy /gomoku/ws 127.0.0.1:4174
+  reverse_proxy /gomoku/api/* 127.0.0.1:4174
+  reverse_proxy /gomoku/healthz 127.0.0.1:4174
+}
