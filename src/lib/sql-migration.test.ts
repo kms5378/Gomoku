@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -15,7 +15,9 @@ const forfeitMigration = readFileSync(
   join(process.cwd(), "supabase/migrations/202605190001_forfeit_on_disconnect.sql"),
   "utf8"
 );
-const migration = `${initialMigration}\n${forbiddenMoveMigration}\n${sideSelectionMigration}\n${forfeitMigration}`;
+const sideSelectionRepairPath = join(process.cwd(), "supabase/migrations/202605190002_repair_side_selection_rpc.sql");
+const sideSelectionRepairMigration = existsSync(sideSelectionRepairPath) ? readFileSync(sideSelectionRepairPath, "utf8") : "";
+const migration = `${initialMigration}\n${forbiddenMoveMigration}\n${sideSelectionMigration}\n${forfeitMigration}\n${sideSelectionRepairMigration}`;
 
 describe("supabase migration contract", () => {
   it("defines the required room tables and RPCs", () => {
@@ -60,6 +62,15 @@ describe("supabase migration contract", () => {
     expect(migration).toContain("status = case");
     expect(migration).toContain("black_player is null or white_player is null");
     expect(migration).toContain("grant execute on function public.choose_side(text, public.stone_color) to authenticated");
+  });
+
+  it("repairs missing side-selection RPCs and reloads the PostgREST schema cache", () => {
+    expect(sideSelectionRepairMigration).toContain("alter column black_player drop not null");
+    expect(sideSelectionRepairMigration).toContain("create or replace function public.create_room");
+    expect(sideSelectionRepairMigration).toContain("create or replace function public.join_room");
+    expect(sideSelectionRepairMigration).toContain("create or replace function public.choose_side");
+    expect(sideSelectionRepairMigration).toContain("grant execute on function public.choose_side(text, public.stone_color) to authenticated");
+    expect(sideSelectionRepairMigration).toContain("notify pgrst, 'reload schema'");
   });
 
   it("marks a stale opponent as a forfeit loss during active games", () => {
