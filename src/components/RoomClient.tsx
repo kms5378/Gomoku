@@ -8,6 +8,7 @@ import {
   getOpponentPlayerId,
   millisecondsUntilForfeit
 } from "@/src/lib/forfeit";
+import { shouldSurfaceBackgroundError, toUserErrorMessage } from "@/src/lib/errors";
 import { buildBoardFromMoves, detectWinner, getForbiddenBlackMove, type StoneColor } from "@/src/lib/gomoku";
 import { canChooseSide } from "@/src/lib/room-rules";
 import { playStoneSound } from "@/src/lib/sound";
@@ -39,6 +40,13 @@ export function RoomClient({ code }: { code: string }) {
   const lastForfeitClaimAtRef = useRef(0);
 
   const normalizedCode = code.toUpperCase();
+  const reportBackgroundError = useCallback((backgroundError: unknown, fallback: string) => {
+    if (!shouldSurfaceBackgroundError(backgroundError)) {
+      return;
+    }
+
+    setError(toUserErrorMessage(backgroundError, fallback));
+  }, []);
 
   const refreshRoom = useCallback(
     async (roomId?: string) => {
@@ -134,7 +142,7 @@ export function RoomClient({ code }: { code: string }) {
         await refreshRoom(joinedRoom.id);
       } catch (joinError) {
         joinAttemptedRef.current = false;
-        setError(joinError instanceof Error ? joinError.message : "방에 입장하지 못했습니다.");
+        setError(toUserErrorMessage(joinError, "방에 입장하지 못했습니다."));
       } finally {
         setIsJoining(false);
       }
@@ -169,17 +177,17 @@ export function RoomClient({ code }: { code: string }) {
       .channel(`room:${room.id}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "rooms", filter: `id=eq.${room.id}` }, () => {
         void refreshRoom(room.id).catch((subscriptionError) => {
-          setError(subscriptionError instanceof Error ? subscriptionError.message : "방 상태를 갱신하지 못했습니다.");
+          reportBackgroundError(subscriptionError, "방 상태를 갱신하지 못했습니다.");
         });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "moves", filter: `room_id=eq.${room.id}` }, () => {
         void refreshRoom(room.id).catch((subscriptionError) => {
-          setError(subscriptionError instanceof Error ? subscriptionError.message : "착수 상태를 갱신하지 못했습니다.");
+          reportBackgroundError(subscriptionError, "착수 상태를 갱신하지 못했습니다.");
         });
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "room_presence", filter: `room_id=eq.${room.id}` }, () => {
         void refreshRoom(room.id).catch((subscriptionError) => {
-          setError(subscriptionError instanceof Error ? subscriptionError.message : "접속 상태를 갱신하지 못했습니다.");
+          reportBackgroundError(subscriptionError, "접속 상태를 갱신하지 못했습니다.");
         });
       })
       .subscribe();
@@ -187,7 +195,7 @@ export function RoomClient({ code }: { code: string }) {
     return () => {
       void client.removeChannel(channel);
     };
-  }, [client, refreshRoom, room?.id]);
+  }, [client, refreshRoom, reportBackgroundError, room?.id]);
 
   const board = useMemo(() => buildBoardFromMoves(moves), [moves]);
   const lastMove = moves.at(-1);
@@ -256,7 +264,7 @@ export function RoomClient({ code }: { code: string }) {
 
     const runTouchPresence = () => {
       void touchPresence().catch((presenceError) => {
-        setError(presenceError instanceof Error ? presenceError.message : "접속 상태를 갱신하지 못했습니다.");
+        reportBackgroundError(presenceError, "접속 상태를 갱신하지 못했습니다.");
       });
     };
     const touchWhenVisible = () => {
@@ -275,7 +283,7 @@ export function RoomClient({ code }: { code: string }) {
       window.removeEventListener("visibilitychange", touchWhenVisible);
       window.removeEventListener("focus", runTouchPresence);
     };
-  }, [myColor, room, touchPresence]);
+  }, [myColor, reportBackgroundError, room, touchPresence]);
 
   useEffect(() => {
     if (
@@ -307,14 +315,14 @@ export function RoomClient({ code }: { code: string }) {
         const nextRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
         await refreshRoom(nextRoom?.id ?? room.id);
       } catch (claimError) {
-        setError(claimError instanceof Error ? claimError.message : "상대 이탈 패배 판정을 처리하지 못했습니다.");
+        reportBackgroundError(claimError, "상대 이탈 패배 판정을 처리하지 못했습니다.");
       } finally {
         setIsClaimingForfeit(false);
       }
     }
 
     void claimForfeitWin();
-  }, [client, isClaimingForfeit, myColor, nowMs, opponentLastSeenAt, refreshRoom, room]);
+  }, [client, isClaimingForfeit, myColor, nowMs, opponentLastSeenAt, refreshRoom, reportBackgroundError, room]);
 
   async function submitMove(row: number, col: number) {
     if (!client || !room || !canPlay || !myColor) {
@@ -344,7 +352,7 @@ export function RoomClient({ code }: { code: string }) {
       playStoneSound();
       await refreshRoom(room.id);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "착수하지 못했습니다.");
+      setError(toUserErrorMessage(submitError, "착수하지 못했습니다."));
     } finally {
       setIsSubmitting(false);
     }
@@ -370,7 +378,7 @@ export function RoomClient({ code }: { code: string }) {
       const nextRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
       await refreshRoom(nextRoom?.id ?? room.id);
     } catch (restartError) {
-      setError(restartError instanceof Error ? restartError.message : "재시작 요청을 처리하지 못했습니다.");
+      setError(toUserErrorMessage(restartError, "재시작 요청을 처리하지 못했습니다."));
     } finally {
       setIsSubmitting(false);
     }
@@ -397,7 +405,7 @@ export function RoomClient({ code }: { code: string }) {
       const nextRoom = normalizeRpcRow<RoomRecord>(data as RoomRecord | RoomRecord[] | null);
       await refreshRoom(nextRoom?.id ?? room.id);
     } catch (sideError) {
-      setError(sideError instanceof Error ? sideError.message : "흑/백 선택을 처리하지 못했습니다.");
+      setError(toUserErrorMessage(sideError, "흑/백 선택을 처리하지 못했습니다."));
     } finally {
       setChoosingSide(null);
     }
